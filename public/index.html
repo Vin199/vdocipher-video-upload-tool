@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VdoCipher Video Uploader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            padding: 40px;
+        }
+
+        .upload-zone {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 60px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f8f9ff;
+            margin-bottom: 30px;
+        }
+
+        .upload-zone:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            transform: translateY(-2px);
+        }
+
+        .upload-zone.drag-over {
+            border-color: #4CAF50;
+            background: #e8f5e8;
+        }
+
+        .upload-zone.disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .upload-text {
+            font-size: 1.3rem;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: #666;
+            font-size: 1rem;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .file-list-container {
+            margin-top: 30px;
+        }
+
+        .file-list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .file-count {
+            font-size: 1.1rem;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .pagination-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .pagination-btn {
+            background: #f0f2ff;
+            border: 1px solid #667eea;
+            color: #667eea;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: #667eea;
+            color: white;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .page-info {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .file-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f8f9ff;
+            border: 1px solid #e0e6ff;
+            border-radius: 10px;
+            padding: 15px 20px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .file-item:hover {
+            background: #f0f2ff;
+            border-color: #667eea;
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            flex: 1;
+        }
+
+        .file-icon {
+            background: #667eea;
+            color: white;
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 15px;
+            font-weight: bold;
+        }
+
+        .file-details h4 {
+            color: #333;
+            margin-bottom: 5px;
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+
+        .file-details p {
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        .file-status {
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        .status-processing {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-ready {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-uploading {
+            background: #cce5ff;
+            color: #0066cc;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .progress-section {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .progress-title {
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: #333;
+        }
+
+        .progress-stats {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .progress-bar {
+            background: #e0e6ff;
+            border-radius: 10px;
+            height: 20px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .upload-controls {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 30px;
+        }
+
+        .success-message, .error-message {
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .error-details {
+            margin-top: 15px;
+            padding: 15px;
+            background: rgba(0,0,0,0.05);
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .download-section {
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .download-btn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        .download-btn:hover:not(:disabled) {
+            box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
+        }
+
+        .status-display {
+            background: #f8f9ff;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .clear-btn {
+            background: #dc3545;
+            box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3);
+        }
+
+        .clear-btn:hover:not(:disabled) {
+            box-shadow: 0 8px 25px rgba(220, 53, 69, 0.4);
+        }
+
+        .results-summary {
+            background: #f8f9ff;
+            border: 1px solid #e0e6ff;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .summary-title {
+            font-size: 1.1rem;
+            font-weight: 500;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            border-radius: 8px;
+            background: white;
+            border: 1px solid #e9ecef;
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-number.success { color: #28a745; }
+        .stat-number.error { color: #dc3545; }
+        .stat-number.total { color: #667eea; }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .main-content {
+                padding: 20px;
+            }
+
+            .upload-controls {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 300px;
+            }
+
+            .file-list-header {
+                flex-direction: column;
+                gap: 15px;
+                align-items: flex-start;
+            }
+
+            .pagination-controls {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .summary-stats {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 VdoCipher Uploader</h1>
+            <p>Upload your videos efficiently and get organized Excel reports</p>
+        </div>
+        
+        <div class="main-content">
+            <div class="upload-zone" id="uploadZone">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">Drop your video files here</div>
+                <div class="upload-hint">or click to browse (supports multiple files up to 5GB each)</div>
+                <input type="file" id="fileInput" class="file-input" multiple accept="video/*">
+            </div>
+
+            <div class="file-list-container" id="fileListContainer" style="display: none;">
+                <div class="file-list-header">
+                    <div class="file-count" id="fileCount">0 files selected</div>
+                    <div class="pagination-controls">
+                        <button class="pagination-btn" id="prevBtn" disabled>← Previous</button>
+                        <span class="page-info" id="pageInfo">Page 1 of 1</span>
+                        <button class="pagination-btn" id="nextBtn" disabled>Next →</button>
+                    </div>
+                </div>
+                <div class="file-list" id="fileList"></div>
+            </div>
+
+            <div class="progress-section" id="progressSection">
+                <div class="progress-header">
+                    <div class="progress-title">Upload Progress</div>
+                    <div class="progress-stats" id="progressStats">0 / 0 completed</div>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="status-display" id="statusDisplay"></div>
+            </div>
+
+            <div class="upload-controls">
+                <button class="btn" id="uploadBtn" disabled>
+                    <span id="uploadBtnText">Upload Videos</span>
+                </button>
+                <button class="btn clear-btn" id="clearBtn">Clear All</button>
+            </div>
+
+            <div class="results-summary" id="resultsSummary">
+                <div class="summary-title">Upload Results</div>
+                <div class="summary-stats">
+                    <div class="stat-item">
+                        <div class="stat-number total" id="totalFiles">0</div>
+                        <div class="stat-label">Total Files</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number success" id="successFiles">0</div>
+                        <div class="stat-label">Successfully Uploaded</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number error" id="failedFiles">0</div>
+                        <div class="stat-label">Failed</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="success-message" id="successMessage">
+                <h3>🎉 Upload Completed Successfully!</h3>
+                <p id="successDetails">Your videos have been uploaded to VdoCipher and the Excel report is ready for download.</p>
+            </div>
+
+            <div class="error-message" id="errorMessage">
+                <h3>❌ Upload Failed</h3>
+                <p id="errorDetails">Some or all videos failed to upload. Please check the details below:</p>
+                <div class="error-details" id="errorDetailsText"></div>
+            </div>
+
+            <div class="download-section" id="downloadSection">
+                <button class="btn download-btn" id="downloadBtn">
+                    📊 Download Excel Report
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class VdoCipherUploader {
+            constructor() {
+                this.files = [];
+                this.videoData = [];
+                this.isUploading = false;
+                this.excelFileName = null;
+                this.currentPage = 1;
+                this.itemsPerPage = 10;
+                this.uploadResults = {
+                    total: 0,
+                    success: 0,
+                    failed: 0,
+                    errors: []
+                };
+                
+                this.initializeElements();
+                this.setupEventListeners();
+                this.checkServerStatus();
+            }
+
+            initializeElements() {
+                this.uploadZone = document.getElementById('uploadZone');
+                this.fileInput = document.getElementById('fileInput');
+                this.fileListContainer = document.getElementById('fileListContainer');
+                this.fileList = document.getElementById('fileList');
+                this.fileCount = document.getElementById('fileCount');
+                this.prevBtn = document.getElementById('prevBtn');
+                this.nextBtn = document.getElementById('nextBtn');
+                this.pageInfo = document.getElementById('pageInfo');
+                this.uploadBtn = document.getElementById('uploadBtn');
+                this.clearBtn = document.getElementById('clearBtn');
+                this.progressSection = document.getElementById('progressSection');
+                this.progressFill = document.getElementById('progressFill');
+                this.progressStats = document.getElementById('progressStats');
+                this.statusDisplay = document.getElementById('statusDisplay');
+                this.successMessage = document.getElementById('successMessage');
+                this.errorMessage = document.getElementById('errorMessage');
+                this.errorDetailsText = document.getElementById('errorDetailsText');
+                this.downloadSection = document.getElementById('downloadSection');
+                this.downloadBtn = document.getElementById('downloadBtn');
+                this.uploadBtnText = document.getElementById('uploadBtnText');
+                this.resultsSummary = document.getElementById('resultsSummary');
+                this.totalFiles = document.getElementById('totalFiles');
+                this.successFiles = document.getElementById('successFiles');
+                this.failedFiles = document.getElementById('failedFiles');
+                this.successDetails = document.getElementById('successDetails');
+            }
+
+            setupEventListeners() {
+                // Upload zone click
+                this.uploadZone.addEventListener('click', () => {
+                    if (!this.isUploading) this.fileInput.click();
+                });
+
+                // File input change
+                this.fileInput.addEventListener('change', (e) => {
+                    this.handleFiles(Array.from(e.target.files));
+                });
+
+                // Drag and drop
+                this.uploadZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    if (!this.isUploading) this.uploadZone.classList.add('drag-over');
+                });
+
+                this.uploadZone.addEventListener('dragleave', () => {
+                    this.uploadZone.classList.remove('drag-over');
+                });
+
+                this.uploadZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    this.uploadZone.classList.remove('drag-over');
+                    if (!this.isUploading) {
+                        const files = Array.from(e.dataTransfer.files).filter(file => 
+                            file.type.startsWith('video/')
+                        );
+                        this.handleFiles(files);
+                    }
+                });
+
+                // Pagination
+                this.prevBtn.addEventListener('click', () => this.previousPage());
+                this.nextBtn.addEventListener('click', () => this.nextPage());
+
+                // Button clicks
+                this.uploadBtn.addEventListener('click', () => this.startUpload());
+                this.clearBtn.addEventListener('click', () => this.clearAll());
+                this.downloadBtn.addEventListener('click', () => this.downloadExcel());
+            }
+
+            async checkServerStatus() {
+                try {
+                    const response = await fetch('/api/status');
+                    const status = await response.json();
+                    console.log('Server status:', status);
+                    
+                    if (!status.apiKeyConfigured) {
+                        this.showError('VdoCipher API key is not configured on the server. Please contact your administrator.');
+                    }
+                } catch (error) {
+                    console.error('Failed to check server status:', error);
+                    this.showError('Unable to connect to server. Please check your connection.');
+                }
+            }
+
+            async handleFiles(newFiles) {
+                const videoFiles = newFiles.filter(file => file.type.startsWith('video/'));
+                
+                if (videoFiles.length === 0) {
+                    alert('Please select video files only.');
+                    return;
+                }
+
+                this.showStatus('Processing files...', 'processing');
+
+                for (const file of videoFiles) {
+                    // Check if file already exists
+                    if (this.files.find(f => f.name === file.name && f.size === file.size)) {
+                        continue;
+                    }
+
+                    const fileData = {
+                        file: file,
+                        name: file.name,
+                        size: file.size,
+                        duration: null,
+                        status: 'processing',
+                        videoId: null,
+                        error: null
+                    };
+
+                    this.files.push(fileData);
+                }
+
+                this.updateFileDisplay();
+                await this.processFileDurations();
+                this.updateUploadButton();
+                this.hideStatus();
+            }
+
+            async processFileDurations() {
+                const processingFiles = this.files.filter(f => f.status === 'processing');
+                
+                for (const fileData of processingFiles) {
+                    try {
+                        const duration = await this.getVideoDuration(fileData.file);
+                        fileData.duration = Math.round(duration);
+                        fileData.status = 'ready';
+                    } catch (error) {
+                        console.error('Error getting duration for', fileData.name, error);
+                        fileData.duration = 0;
+                        fileData.status = 'error';
+                        fileData.error = 'Failed to read video metadata';
+                    }
+                }
+
+                this.updateFileDisplay();
+            }
+
+            getVideoDuration(file) {
+                return new Promise((resolve, reject) => {
+                    const video = document.createElement('video');
+                    video.preload = 'metadata';
+                    
+                    video.onloadedmetadata = () => {
+                        window.URL.revokeObjectURL(video.src);
+                        resolve(video.duration);
+                    };
+                    
+                    video.onerror = () => {
+                        window.URL.revokeObjectURL(video.src);
+                        reject(new Error('Failed to load video metadata'));
+                    };
+                    
+                    video.src = URL.createObjectURL(file);
+                });
+            }
+
+            updateFileDisplay() {
+                this.fileCount.textContent = `${this.files.length} file${this.files.length !== 1 ? 's' : ''} selected`;
+                
+                if (this.files.length === 0) {
+                    this.fileListContainer.style.display = 'none';
+                    return;
+                }
+
+                this.fileListContainer.style.display = 'block';
+                this.updatePagination();
+                this.renderCurrentPage();
+            }
+
+            updatePagination() {
+                const totalPages = Math.ceil(this.files.length / this.itemsPerPage);
+                this.currentPage = Math.min(this.currentPage, totalPages);
+                this.currentPage = Math.max(1, this.currentPage);
+
+                this.prevBtn.disabled = this.currentPage <= 1;
+                this.nextBtn.disabled = this.currentPage >= totalPages;
+                this.pageInfo.textContent = `Page ${this.currentPage} of ${totalPages}`;
+            }
+
+            renderCurrentPage() {
+                const startIndex = (this.currentPage - 1) * this.itemsPerPage;
+                const endIndex = Math.min(startIndex + this.itemsPerPage, this.files.length);
+                const pageFiles = this.files.slice(startIndex, endIndex);
+
+                this.fileList.innerHTML = '';
+                pageFiles.forEach((fileData, index) => {
+                    this.renderFileItem(fileData, startIndex + index);
+                });
+            }
+
+            renderFileItem(fileData, globalIndex) {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                fileItem.id = `file-${globalIndex}`;
+                
+                let statusText = this.getStatusText(fileData.status);
+                if (fileData.status === 'error' && fileData.error) {
+                    statusText = fileData.error;
+                }
+
+                fileItem.innerHTML = `
+                    <div class="file-info">
+                        <div class="file-icon">${this.getFileIcon(fileData.status)}</div>
+                        <div class="file-details">
+                            <h4>${fileData.name}</h4>
+                            <p>${this.formatFileSize(fileData.size)} • Duration: ${fileData.duration !== null ? fileData.duration + 's' : 'Loading...'}</p>
+                        </div>
+                    </div>
+                    <div class="file-status status-${fileData.status}">
+                        ${statusText}
+                    </div>
+                `;
+                
+                this.fileList.appendChild(fileItem);
+            }
+
+            getFileIcon(status) {
+                switch (status) {
+                    case 'processing': return '⏳';
+                    case 'ready': return '📹';
+                    case 'uploading': return '⬆️';
+                    case 'success': return '✅';
+                    case 'error': return '❌';
+                    default: return '📹';
+                }
+            }
+
+            getStatusText(status) {
+                switch (status) {
+                    case 'processing': return 'Processing...';
+                    case 'ready': return 'Ready to upload';
+                    case 'uploading': return 'Uploading...';
+                    case 'success': return 'Uploaded successfully';
+                    case 'error': return 'Error';
+                    default: return 'Unknown';
+                }
+            }
+
+            previousPage() {
+                if (this.currentPage > 1) {
+                    this.currentPage--;
+                    this.updatePagination();
+                    this.renderCurrentPage();
+                }
+            }
+
+            nextPage() {
+                const totalPages = Math.ceil(this.files.length / this.itemsPerPage);
+                if (this.currentPage < totalPages) {
+                    this.currentPage++;
+                    this.updatePagination();
+                    this.renderCurrentPage();
+                }
+            }
+
+            formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            updateUploadButton() {
+                const readyFiles = this.files.filter(f => f.status === 'ready');
+                this.uploadBtn.disabled = readyFiles.length === 0 || this.isUploading;
+                
+                if (readyFiles.length > 0) {
+                    this.uploadBtnText.textContent = `Upload ${readyFiles.length} Video${readyFiles.length > 1 ? 's' : ''}`;
+                } else {
+                    this.uploadBtnText.textContent = 'Upload Videos';
+                }
+            }
+
+            async startUpload() {
+                if (this.isUploading) return;
+                
+                const readyFiles = this.files.filter(f => f.status === 'ready');
+                if (readyFiles.length === 0) {
+                    alert('No files ready for upload');
+                    return;
+                }
+
+                this.resetMessages();
+                this.isUploading = true;
+                this.uploadBtn.disabled = true;
+                this.clearBtn.disabled = true;
+                this.uploadZone.classList.add('disabled');
+                this.uploadBtnText.innerHTML = '<span class="loading-spinner"></span>Uploading...';
+                
+                this.progressSection.style.display = 'block';
+                this.showStatus('Preparing upload...', 'processing');
+
+                // Reset upload results
+                this.uploadResults = {
+                    total: readyFiles.length,
+                    success: 0,
+                    failed: 0,
+                    errors: []
+                };
+
+                try {
+                    // Mark files as uploading
+                    readyFiles.forEach(fileData => {
+                        fileData.status = 'uploading';
+                    });
+                    this.updateFileDisplay();
+
+                    const formData = new FormData();
+                    const videoData = [];
+
+                    // Add files and prepare metadata
+                    readyFiles.forEach(fileData => {
+                        formData.append('videos', fileData.file);
+                        videoData.push({
+                            name: fileData.name,
+                            duration: fileData.duration
+                        });
+                    });
+
+                    // Add video metadata
+                    formData.append('videoData', JSON.stringify(videoData));
+
+                    this.showStatus('Uploading videos to VdoCipher...', 'processing');
+                    this.updateProgressStats();
+
+                    // Upload with progress tracking
+                    const response = await fetch('/api/upload-videos', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+
+                    // Handle different response scenarios
+                    if (response.status === 400) {
+                        // All uploads failed
+                        throw new Error(result.error || 'All uploads failed');
+                    } else if (response.status === 207) {
+                        // Partial success - some uploads failed
+                        await this.handleUploadResponse(result, readyFiles);
+                    } else if (response.ok) {
+                        // All uploads successful
+                        await this.handleUploadResponse(result, readyFiles);
+                    } else {
+                        // Other error
+                        throw new Error(result.error || `HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                } catch (error) {
+                    console.error('Upload error:', error);
+                    this.handleUploadError(error, readyFiles);
+                } finally {
+                    this.isUploading = false;
+                    this.uploadBtn.disabled = false;
+                    this.clearBtn.disabled = false;
+                    this.uploadZone.classList.remove('disabled');
+                    this.uploadBtnText.textContent = 'Upload Videos';
+                    this.updateUploadButton();
+                }
+            }
+
+            async handleUploadResponse(result, readyFiles) {
+                this.excelFileName = result.excelFileName;
+                
+                // Handle detailed upload results
+                if (result.successfulUploads && result.successfulUploads.length > 0) {
+                    // Mark successful uploads
+                    result.successfulUploads.forEach(upload => {
+                        const fileData = readyFiles.find(f => f.name === upload.originalName);
+                        if (fileData) {
+                            fileData.status = 'success';
+                            fileData.videoId = upload.videoId;
+                            this.uploadResults.success++;
+                        }
+                    });
+                }
+
+                // Handle failed uploads
+                if (result.failedUploads && result.failedUploads.length > 0) {
+                    result.failedUploads.forEach(failedUpload => {
+                        const fileData = readyFiles.find(f => f.name === failedUpload.fileName);
+                        if (fileData) {
+                            fileData.status = 'error';
+                            fileData.error = failedUpload.error;
+                            this.uploadResults.failed++;
+                            this.uploadResults.errors.push(failedUpload);
+                        }
+                    });
+                }
+
+                // Handle case where backend doesn't provide detailed results (backward compatibility)
+                if (!result.successfulUploads && !result.failedUploads && result.excelFileName) {
+                    readyFiles.forEach(fileData => {
+                        fileData.status = 'success';
+                        this.uploadResults.success++;
+                    });
+                }
+
+                this.progressFill.style.width = '100%';
+                this.updateProgressStats();
+
+                // Show appropriate message based on results
+                if (this.uploadResults.failed === 0) {
+                    this.showStatus('All uploads completed successfully! 🎉', 'success');
+                    this.successDetails.textContent = `All ${this.uploadResults.success} video${this.uploadResults.success > 1 ? 's' : ''} uploaded successfully to VdoCipher.`;
+                    this.successMessage.style.display = 'block';
+                } else if (this.uploadResults.success > 0) {
+                    this.showStatus('Upload partially completed ⚠️', 'warning');
+                    this.successDetails.textContent = `${this.uploadResults.success} of ${this.uploadResults.total} videos uploaded successfully.`;
+                    this.successMessage.style.display = 'block';
+                    
+                    // Also show error details
+                    const errorSummary = this.uploadResults.errors.map(err => 
+                        `${err.fileName}: ${err.error}`
+                    ).join('\n');
+                    this.errorDetailsText.textContent = `Partial upload completed.\n\nFailed uploads:\n${errorSummary}`;
+                    this.errorMessage.style.display = 'block';
+                } else {
+                    throw new Error('All uploads failed');
+                }
+
+                if (result.excelFileName) {
+                    this.downloadSection.style.display = 'block';
+                }
+
+                this.updateFileDisplay();
+                this.updateResultsSummary();
+            }
+
+            handleUploadError(error, readyFiles) {
+                // Mark all uploading files as failed
+                readyFiles.forEach(fileData => {
+                    if (fileData.status === 'uploading') {
+                        fileData.status = 'error';
+                        fileData.error = 'Upload failed';
+                        this.uploadResults.failed++;
+                    }
+                });
+
+                // Extract detailed error information if available
+                let errorMessage = error.message;
+                let errorDetails = `Error: ${error.message}\n\n`;
+
+                // Check if this is a structured error response from backend
+                if (error.message.includes('400') || error.message.includes('403')) {
+                    errorDetails += `This could be due to:\n• VdoCipher trial limit reached (common cause)\n• Invalid API credentials\n• Server configuration issues\n• Network connection problems`;
+                } else if (error.message.includes('500')) {
+                    errorDetails += `Server error occurred:\n• Internal server problem\n• Database connection issues\n• File processing errors`;
+                } else {
+                    errorDetails += `This could be due to:\n• Network connection issues\n• Server timeout\n• Invalid file format\n• Server overload`;
+                }
+
+                this.uploadResults.errors.push({
+                    type: 'general',
+                    message: errorMessage,
+                    timestamp: new Date().toISOString()
+                });
+
+                this.showStatus('Upload failed ❌', 'error');
+                this.errorDetailsText.textContent = errorDetails;
+                this.errorMessage.style.display = 'block';
+                
+                this.updateFileDisplay();
+                this.updateResultsSummary();
+            }
+
+            updateProgressStats() {
+                const completed = this.uploadResults.success + this.uploadResults.failed;
+                this.progressStats.textContent = `${completed} / ${this.uploadResults.total} completed`;
+                
+                if (this.uploadResults.total > 0) {
+                    const percentage = (completed / this.uploadResults.total) * 100;
+                    this.progressFill.style.width = `${percentage}%`;
+                }
+            }
+
+            updateResultsSummary() {
+                if (this.uploadResults.total > 0) {
+                    this.totalFiles.textContent = this.uploadResults.total;
+                    this.successFiles.textContent = this.uploadResults.success;
+                    this.failedFiles.textContent = this.uploadResults.failed;
+                    this.resultsSummary.style.display = 'block';
+                }
+            }
+
+            showStatus(message, type) {
+                this.statusDisplay.style.display = 'block';
+                this.statusDisplay.innerHTML = `
+                    <div class="status-${type}">
+                        ${type === 'processing' ? '<span class="loading-spinner"></span>' : ''}
+                        ${message}
+                    </div>
+                `;
+            }
+
+            hideStatus() {
+                this.statusDisplay.style.display = 'none';
+            }
+
+            showError(message) {
+                this.errorDetailsText.textContent = message;
+                this.errorMessage.style.display = 'block';
+            }
+
+            resetMessages() {
+                this.successMessage.style.display = 'none';
+                this.errorMessage.style.display = 'none';
+                this.downloadSection.style.display = 'none';
+                this.resultsSummary.style.display = 'none';
+            }
+
+            async downloadExcel() {
+                if (!this.excelFileName) {
+                    alert('No Excel file available for download');
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/download/${this.excelFileName}`);
+                    if (!response.ok) {
+                        throw new Error('Download failed');
+                    }
+
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = this.excelFileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+
+                } catch (error) {
+                    console.error('Download error:', error);
+                    alert('Failed to download Excel file: ' + error.message);
+                }
+            }
+
+            clearAll() {
+                if (this.isUploading) {
+                    if (!confirm('Upload is in progress. Are you sure you want to clear all files?')) {
+                        return;
+                    }
+                }
+
+                this.files = [];
+                this.videoData = [];
+                this.excelFileName = null;
+                this.currentPage = 1;
+                this.uploadResults = { total: 0, success: 0, failed: 0, errors: [] };
+                
+                this.fileInput.value = '';
+                this.updateFileDisplay();
+                this.updateUploadButton();
+                this.progressSection.style.display = 'none';
+                this.resetMessages();
+                this.hideStatus();
+                this.progressFill.style.width = '0%';
+                this.uploadZone.classList.remove('disabled');
+            }
+        }
+
+        // Initialize the uploader when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            new VdoCipherUploader();
+        });
+    </script>
+</body>
+</html>
