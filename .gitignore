@@ -4,3 +4,16 @@ node_modules/
 # Environment variables
 .env
 .env.*.local
+
+# Database
+uploads.db
+uploads.db-journal
+
+# Temporary uploads
+temp_uploads/
+
+# Logs
+logs/
+upload_logs/
+*.log
+*.jsonl

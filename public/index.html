@@ -176,7 +176,7 @@
 
         .file-item {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             justify-content: space-between;
             background: #f8f9ff;
             border: 1px solid #e0e6ff;
@@ -184,6 +184,8 @@
             padding: 15px 20px;
             margin-bottom: 10px;
             transition: all 0.3s ease;
+            width: 100%;
+            gap: 15px;
         }
 
         .file-item:hover {
@@ -193,8 +195,9 @@
 
         .file-info {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             flex: 1;
+            min-width: 0;
         }
 
         .file-icon {
@@ -208,6 +211,12 @@
             justify-content: center;
             margin-right: 15px;
             font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .file-details {
+            flex: 1;
+            min-width: 0;
         }
 
         .file-details h4 {
@@ -215,19 +224,25 @@
             margin-bottom: 5px;
             font-weight: 500;
             font-size: 0.95rem;
+            word-break: break-word;
         }
 
         .file-details p {
             color: #666;
             font-size: 0.85rem;
+            word-break: break-word;
         }
 
         .file-status {
-            padding: 5px 15px;
-            border-radius: 20px;
+            padding: 8px 15px;
+            border-radius: 8px;
             font-size: 0.85rem;
             font-weight: 500;
-            white-space: nowrap;
+            word-break: break-word;
+            white-space: normal;
+            max-width: 350px;
+            text-align: center;
+            line-height: 1.4;
         }
 
         .status-processing {
@@ -258,6 +273,11 @@
         .status-warning {
             background: #fff3cd;
             color: #856404;
+        }
+
+        .status-skipped {
+            background: #d1ecf1;
+            color: #0c5460;
         }
 
         .progress-section {
@@ -525,11 +545,15 @@
                         <div class="stat-number error" id="failedFiles">0</div>
                         <div class="stat-label">Failed</div>
                     </div>
+                    <div class="stat-item">
+                        <div class="stat-number" style="color: #17a2b8;" id="skippedFiles">0</div>
+                        <div class="stat-label">Skipped (Already Uploaded)</div>
+                    </div>
                 </div>
             </div>
 
             <div class="success-message" id="successMessage">
-                <h3>🎉 Upload Completed Successfully!</h3>
+                <h3 id="successTitle">🎉 Upload Completed Successfully!</h3>
                 <p id="successDetails">Your videos have been uploaded to VdoCipher and the Excel report is ready for download.</p>
             </div>
 
@@ -584,6 +608,8 @@
                 this.progressStats = document.getElementById('progressStats');
                 this.statusDisplay = document.getElementById('statusDisplay');
                 this.successMessage = document.getElementById('successMessage');
+                this.successTitle = document.getElementById('successTitle');
+                this.successDetails = document.getElementById('successDetails');
                 this.errorMessage = document.getElementById('errorMessage');
                 this.errorDetailsText = document.getElementById('errorDetailsText');
                 this.downloadSection = document.getElementById('downloadSection');
@@ -593,7 +619,7 @@
                 this.totalFiles = document.getElementById('totalFiles');
                 this.successFiles = document.getElementById('successFiles');
                 this.failedFiles = document.getElementById('failedFiles');
-                this.successDetails = document.getElementById('successDetails');
+                this.skippedFiles = document.getElementById('skippedFiles');
             }
 
             setupEventListeners() {
@@ -683,14 +709,23 @@
                 }
 
                 this.updateFileDisplay();
-                await this.processFileDurations();
+
+                // ============================================
+                // SWITCH BETWEEN ENCRYPTED/UNENCRYPTED HERE:
+                // ============================================
+                // For UNENCRYPTED videos: await this.processUnencryptedVideos();
+                // For ENCRYPTED videos:   await this.processEncryptedVideos();
+                await this.processUnencryptedVideos();
+                // ============================================
+
                 this.updateUploadButton();
                 this.hideStatus();
             }
 
-            async processFileDurations() {
+            // FUNCTION 1: For UNENCRYPTED videos (extracts duration)
+            async processUnencryptedVideos() {
                 const processingFiles = this.files.filter(f => f.status === 'processing');
-                
+
                 for (const fileData of processingFiles) {
                     try {
                         const duration = await this.getVideoDuration(fileData.file);
@@ -706,6 +741,22 @@
 
                 this.updateFileDisplay();
             }
+
+            // FUNCTION 2: For ENCRYPTED videos (skips duration extraction)
+            //async processEncryptedVideos() {
+            //    const processingFiles = this.files.filter(f => f.status === 'processing');
+
+            //    console.log(`Processing ${processingFiles.length} encrypted videos (skipping duration extraction)...`);
+
+            //    for (const fileData of processingFiles) {
+            //        // Mark as ready without trying to extract duration
+            //        fileData.duration = 'Unknown';
+            //        fileData.status = 'ready';
+            //        console.log(`✓ ${fileData.name} - Ready for upload (encrypted)`);
+            //    }
+
+            //    this.updateFileDisplay();
+            //}
 
             getVideoDuration(file) {
                 return new Promise((resolve, reject) => {
@@ -803,6 +854,7 @@
                     case 'ready': return 'Ready to upload';
                     case 'uploading': return 'Uploading...';
                     case 'success': return 'Uploaded successfully';
+                    case 'skipped': return 'Already uploaded (skipped)';
                     case 'error': return 'Error';
                     default: return 'Unknown';
                 }
@@ -934,16 +986,25 @@
 
             async handleUploadResponse(result, readyFiles) {
                 this.excelFileName = result.excelFileName;
-                
+
+                // Track skipped files
+                let skippedCount = 0;
+
                 // Handle detailed upload results
                 if (result.successfulUploads && result.successfulUploads.length > 0) {
-                    // Mark successful uploads
+                    // Mark successful uploads and skipped files
                     result.successfulUploads.forEach(upload => {
                         const fileData = readyFiles.find(f => f.name === upload.originalName);
                         if (fileData) {
-                            fileData.status = 'success';
-                            fileData.videoId = upload.videoId;
-                            this.uploadResults.success++;
+                            if (upload.skipped) {
+                                fileData.status = 'skipped';
+                                fileData.videoId = upload.videoId;
+                                skippedCount++;
+                            } else {
+                                fileData.status = 'success';
+                                fileData.videoId = upload.videoId;
+                                this.uploadResults.success++;
+                            }
                         }
                     });
                 }
@@ -973,23 +1034,80 @@
                 this.updateProgressStats();
 
                 // Show appropriate message based on results
+                let message, details, title;
+                const totalFiles = this.uploadResults.success + skippedCount + this.uploadResults.failed;
+
+                // SCENARIO 1: No failures (all success or all skipped or mixed)
                 if (this.uploadResults.failed === 0) {
-                    this.showStatus('All uploads completed successfully! 🎉', 'success');
-                    this.successDetails.textContent = `All ${this.uploadResults.success} video${this.uploadResults.success > 1 ? 's' : ''} uploaded successfully to VdoCipher.`;
+                    if (this.uploadResults.success === 0 && skippedCount > 0) {
+                        // CASE: All skipped, none uploaded
+                        title = 'ℹ️ All Files Already Uploaded';
+                        message = 'All files already uploaded ℹ️';
+                        details = `All ${skippedCount} file${skippedCount !== 1 ? 's' : ''} were already uploaded to VdoCipher. No new uploads needed.`;
+                        this.showStatus(message, 'warning');
+                    } else if (this.uploadResults.success > 0 && skippedCount > 0) {
+                        // CASE: Some uploaded, some skipped, no failures
+                        title = '🎉 Upload Completed!';
+                        message = 'Upload completed! 🎉';
+                        details = `${this.uploadResults.success} new video${this.uploadResults.success !== 1 ? 's' : ''} uploaded, ${skippedCount} already existed (skipped).`;
+                        this.showStatus(message, 'success');
+                    } else if (this.uploadResults.success > 0 && skippedCount === 0) {
+                        // CASE: All uploaded, none skipped, no failures
+                        title = '🎉 Upload Completed Successfully!';
+                        message = 'All uploads completed successfully! 🎉';
+                        details = `${this.uploadResults.success} video${this.uploadResults.success !== 1 ? 's' : ''} uploaded successfully to VdoCipher.`;
+                        this.showStatus(message, 'success');
+                    }
+
+                    this.successTitle.textContent = title;
+                    this.successDetails.textContent = details;
                     this.successMessage.style.display = 'block';
-                } else if (this.uploadResults.success > 0) {
-                    this.showStatus('Upload partially completed ⚠️', 'warning');
-                    this.successDetails.textContent = `${this.uploadResults.success} of ${this.uploadResults.total} videos uploaded successfully.`;
-                    this.successMessage.style.display = 'block';
-                    
-                    // Also show error details
-                    const errorSummary = this.uploadResults.errors.map(err => 
-                        `${err.fileName}: ${err.error}`
-                    ).join('\n');
-                    this.errorDetailsText.textContent = `Partial upload completed.\n\nFailed uploads:\n${errorSummary}`;
-                    this.errorMessage.style.display = 'block';
-                } else {
-                    throw new Error('All uploads failed');
+                }
+                // SCENARIO 2: Some failures exist
+                else if (this.uploadResults.failed > 0) {
+                    // Build parts of the message
+                    const parts = [];
+                    if (this.uploadResults.success > 0) {
+                        parts.push(`${this.uploadResults.success} uploaded`);
+                    }
+                    if (skippedCount > 0) {
+                        parts.push(`${skippedCount} skipped`);
+                    }
+                    if (this.uploadResults.failed > 0) {
+                        parts.push(`${this.uploadResults.failed} failed`);
+                    }
+
+                    if (this.uploadResults.success > 0 || skippedCount > 0) {
+                        // CASE: Some success/skipped + some failures (partial success)
+                        title = '⚠️ Upload Partially Completed';
+                        message = 'Upload partially completed ⚠️';
+                        details = parts.join(', ') + '. Safe to re-run for failed files.';
+
+                        this.showStatus(message, 'warning');
+                        this.successTitle.textContent = title;
+                        this.successDetails.textContent = details;
+                        this.successMessage.style.display = 'block';
+
+                        // Show error details
+                        const errorSummary = this.uploadResults.errors.map(err =>
+                            `${err.fileName}: ${err.error}`
+                        ).join('\n');
+                        this.errorDetailsText.textContent = `Partial upload completed. Safe to re-run.\n\nFailed uploads:\n${errorSummary}`;
+                        this.errorMessage.style.display = 'block';
+                    } else {
+                        // CASE: All failed, none succeeded or skipped
+                        title = '❌ All Uploads Failed';
+                        message = 'All uploads failed ❌';
+                        details = `All ${this.uploadResults.failed} file${this.uploadResults.failed !== 1 ? 's' : ''} failed to upload. Check errors below and try again.`;
+
+                        this.showStatus(message, 'error');
+                        this.errorDetailsText.textContent = this.uploadResults.errors.map(err =>
+                            `${err.fileName}: ${err.error}`
+                        ).join('\n');
+                        this.errorMessage.style.display = 'block';
+
+                        // Don't show success message for all failures
+                    }
                 }
 
                 if (result.excelFileName) {
@@ -1049,9 +1167,13 @@
 
             updateResultsSummary() {
                 if (this.uploadResults.total > 0) {
+                    // Count skipped files
+                    const skippedCount = this.files.filter(f => f.status === 'skipped').length;
+
                     this.totalFiles.textContent = this.uploadResults.total;
                     this.successFiles.textContent = this.uploadResults.success;
                     this.failedFiles.textContent = this.uploadResults.failed;
+                    this.skippedFiles.textContent = skippedCount;
                     this.resultsSummary.style.display = 'block';
                 }
             }
