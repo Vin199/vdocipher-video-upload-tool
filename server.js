@@ -6,10 +6,22 @@ const XLSX = require('xlsx');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs-extra');
+const https = require('https');
+const http = require('http');
 const UploadDatabase = require('./db-manager');
 const VdoCipherVerifier = require('./vdocipher-verifier');
 const SimpleUploadLogger = require('./simple-logger');
 require('dotenv').config();
+
+const httpAgent = new http.Agent({ 
+  keepAlive: true,
+  maxSockets: 15
+});
+
+const httpsAgent = new https.Agent({ 
+  keepAlive: true,
+  maxSockets: 15
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -66,18 +78,13 @@ const upload = multer({
 
 // Helper function to get upload credentials from VdoCipher
 async function getUploadCredentials(videoTitle, folderId = DEFAULT_FOLDER_ID) {
-  try {
-    console.log(`Getting upload credentials for: "${videoTitle}"`);
-    
+  try {    
     // Create query string manually to ensure proper formatting
     const queryParams = new URLSearchParams({
       title: videoTitle,
       folderId: folderId
     });
-    
     const url = `${API_BASE_URL}/videos?${queryParams.toString()}`;
-    console.log(`API URL: ${url}`);
-    
     const response = await axios({
       method: 'PUT',
       url: url,
@@ -86,8 +93,6 @@ async function getUploadCredentials(videoTitle, folderId = DEFAULT_FOLDER_ID) {
         'Accept': 'application/json'
       }
     });
-    
-    console.log(`✅ Upload credentials obtained for: "${videoTitle}"`);
     return response.data;
   } catch (error) {
     console.error(`❌ Failed to get credentials for: "${videoTitle}"`);
@@ -127,7 +132,9 @@ async function uploadToVdoCipher(filePath, uploadData, originalName) {
         ...form.getHeaders(),
       },
       maxContentLength: Infinity,
-      maxBodyLength: Infinity
+      maxBodyLength: Infinity,
+      httpAgent: httpAgent,
+      httpsAgent: httpsAgent 
     });
 
     return {
