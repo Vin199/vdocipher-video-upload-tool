@@ -46,6 +46,7 @@ class SimpleUploadLogger {
     const fileLog = {
       timestamp: new Date().toISOString(),
       fileName: data.fileName,
+      folderPath: data.folderPath || data.fileName,
       status: data.status, // 'Uploaded', 'Skipped', 'Failed'
       videoId: data.videoId || 'N/A',
       videoTitle: data.videoTitle || path.parse(data.fileName).name,
@@ -138,12 +139,13 @@ class SimpleUploadLogger {
 
     // Details sheet
     const detailsData = [
-      ['File Name', 'Status', 'Video ID', 'Video Title', 'Duration (seconds)', 'File Size', 'Reason/Error', 'Timestamp']
+      ['File Name', 'Folder Path', 'Status', 'Video ID', 'Video Title', 'Duration (seconds)', 'File Size', 'Reason/Error', 'Timestamp']
     ];
 
     this.currentSession.files.forEach(file => {
       detailsData.push([
         file.fileName,
+        file.folderPath,
         file.status,
         file.videoId,
         file.videoTitle,
@@ -155,6 +157,20 @@ class SimpleUploadLogger {
     });
 
     const detailsSheet = XLSX.utils.aoa_to_sheet(detailsData);
+
+    // Set column widths for better readability
+    detailsSheet['!cols'] = [
+      { wch: 30 },  // File Name
+      { wch: 50 },  // Folder Path
+      { wch: 12 },  // Status
+      { wch: 25 },  // Video ID
+      { wch: 30 },  // Video Title
+      { wch: 18 },  // Duration
+      { wch: 12 },  // File Size
+      { wch: 60 },  // Reason/Error
+      { wch: 20 }   // Timestamp
+    ];
+
     XLSX.utils.book_append_sheet(workbook, detailsSheet, 'Upload Details');
 
     // Save file

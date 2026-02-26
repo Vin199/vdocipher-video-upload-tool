@@ -275,7 +275,8 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
           videoTitle: path.parse(file.originalname).name,
           duration: metadata ? metadata.duration : 'Unknown',
           reason: verification.reason,
-          fileSize: file.size
+          fileSize: file.size,
+          folderPath: metadata ? metadata.folderPath : file.originalname
         });
       }
     });
@@ -320,7 +321,8 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
             videoTitle: videoTitle,
             duration: duration,
             reason: verification.reason === 'retry_failed' ? 'Retried after previous failure' : '',
-            fileSize: file.size
+            fileSize: file.size,
+            folderPath: metadata ? metadata.folderPath : file.originalname
           });
 
           // Clean up temp file
@@ -363,7 +365,8 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
             fileName: file.originalname,
             status: 'Failed',
             error: fullErrorMessage,
-            fileSize: file.size
+            fileSize: file.size,
+            folderPath: metadata ? metadata.folderPath : file.originalname
           });
 
           // Clean up temp file even on error

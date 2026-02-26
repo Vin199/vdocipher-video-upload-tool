@@ -495,9 +495,15 @@
         <div class="main-content">
             <div class="upload-zone" id="uploadZone">
                 <div class="upload-icon">📁</div>
-                <div class="upload-text">Drop your video files here</div>
-                <div class="upload-hint">or click to browse (supports multiple files up to 5GB each)</div>
-                <input type="file" id="fileInput" class="file-input" multiple accept="video/*">
+                <div class="upload-text">Click to select folder with videos</div>
+                <div class="upload-hint">Automatically scans all nested folders and shows full paths</div>
+                <input type="file" id="folderInput" class="file-input" webkitdirectory directory multiple>
+            </div>
+
+            <div style="text-align: center; margin-top: 15px;">
+                <p style="color: #7f8c8d; font-size: 0.9rem; margin: 0 0 10px 0;">
+                    💡 Tip: To track folder paths, select the parent folder and the tool will scan all videos inside
+                </p>
             </div>
 
             <div class="file-list-container" id="fileListContainer" style="display: none;">
@@ -594,7 +600,7 @@
 
             initializeElements() {
                 this.uploadZone = document.getElementById('uploadZone');
-                this.fileInput = document.getElementById('fileInput');
+                this.folderInput = document.getElementById('folderInput');
                 this.fileListContainer = document.getElementById('fileListContainer');
                 this.fileList = document.getElementById('fileList');
                 this.fileCount = document.getElementById('fileCount');
@@ -623,17 +629,28 @@
             }
 
             setupEventListeners() {
-                // Upload zone click
+                // Upload zone click - select folders
                 this.uploadZone.addEventListener('click', () => {
-                    if (!this.isUploading) this.fileInput.click();
+                    if (!this.isUploading) this.folderInput.click();
                 });
 
-                // File input change
-                this.fileInput.addEventListener('change', (e) => {
-                    this.handleFiles(Array.from(e.target.files));
+                // Folder input change - scans all nested folders
+                this.folderInput.addEventListener('change', (e) => {
+                    const allFiles = Array.from(e.target.files);
+                    // Filter only video files
+                    const videoFiles = allFiles.filter(file => this.isVideoFile(file));
+
+                    if (videoFiles.length === 0 && allFiles.length > 0) {
+                        alert('No video files found in the selected folder(s).');
+                        return;
+                    }
+
+                    this.handleFiles(videoFiles);
+                    // Reset input to allow selecting same folder again
+                    e.target.value = '';
                 });
 
-                // Drag and drop
+                // Drag and drop for folders
                 this.uploadZone.addEventListener('dragover', (e) => {
                     e.preventDefault();
                     if (!this.isUploading) this.uploadZone.classList.add('drag-over');
@@ -643,14 +660,20 @@
                     this.uploadZone.classList.remove('drag-over');
                 });
 
-                this.uploadZone.addEventListener('drop', (e) => {
+                this.uploadZone.addEventListener('drop', async (e) => {
                     e.preventDefault();
                     this.uploadZone.classList.remove('drag-over');
                     if (!this.isUploading) {
-                        const files = Array.from(e.dataTransfer.files).filter(file => 
-                            file.type.startsWith('video/')
-                        );
-                        this.handleFiles(files);
+                        const items = Array.from(e.dataTransfer.items);
+                        const files = await this.getAllFilesFromDrop(items);
+                        const videoFiles = files.filter(file => this.isVideoFile(file));
+
+                        if (videoFiles.length === 0) {
+                            alert('No video files found in the dropped folder(s).');
+                            return;
+                        }
+
+                        this.handleFiles(videoFiles);
                     }
                 });
 
@@ -662,6 +685,80 @@
                 this.uploadBtn.addEventListener('click', () => this.startUpload());
                 this.clearBtn.addEventListener('click', () => this.clearAll());
                 this.downloadBtn.addEventListener('click', () => this.downloadExcel());
+            }
+
+            // Helper function to check if file is a video
+            isVideoFile(file) {
+                // Check by MIME type
+                if (file.type && file.type.startsWith('video/')) {
+                    return true;
+                }
+
+                // Check by extension as fallback
+                const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv', '.wmv', '.m4v', '.mpeg', '.mpg', '.3gp'];
+                const fileName = file.name.toLowerCase();
+                return videoExtensions.some(ext => fileName.endsWith(ext));
+            }
+
+            // Recursively get all files from dropped folders
+            async getAllFilesFromDrop(items) {
+                const files = [];
+
+                for (const item of items) {
+                    const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+
+                    if (entry) {
+                        if (entry.isFile) {
+                            const file = await this.getFileFromEntry(entry);
+                            if (file) files.push(file);
+                        } else if (entry.isDirectory) {
+                            const dirFiles = await this.readDirectoryRecursively(entry);
+                            files.push(...dirFiles);
+                        }
+                    } else {
+                        // Fallback for browsers that don't support webkitGetAsEntry
+                        const file = item.getAsFile();
+                        if (file) files.push(file);
+                    }
+                }
+
+                return files;
+            }
+
+            // Read directory recursively
+            async readDirectoryRecursively(directoryEntry) {
+                const files = [];
+                const reader = directoryEntry.createReader();
+
+                const readEntries = () => {
+                    return new Promise((resolve, reject) => {
+                        reader.readEntries(resolve, reject);
+                    });
+                };
+
+                let entries = await readEntries();
+
+                while (entries.length > 0) {
+                    for (const entry of entries) {
+                        if (entry.isFile) {
+                            const file = await this.getFileFromEntry(entry);
+                            if (file) files.push(file);
+                        } else if (entry.isDirectory) {
+                            const subFiles = await this.readDirectoryRecursively(entry);
+                            files.push(...subFiles);
+                        }
+                    }
+                    entries = await readEntries();
+                }
+
+                return files;
+            }
+
+            // Get file from FileSystemFileEntry
+            getFileFromEntry(fileEntry) {
+                return new Promise((resolve, reject) => {
+                    fileEntry.file(resolve, reject);
+                });
             }
 
             async checkServerStatus() {
@@ -680,16 +777,15 @@
             }
 
             async handleFiles(newFiles) {
-                const videoFiles = newFiles.filter(file => file.type.startsWith('video/'));
-                
-                if (videoFiles.length === 0) {
-                    alert('Please select video files only.');
+                // Files are already filtered for videos before calling this function
+                if (newFiles.length === 0) {
+                    alert('No video files found.');
                     return;
                 }
 
-                this.showStatus('Processing files...', 'processing');
+                this.showStatus(`Processing ${newFiles.length} video files...`, 'processing');
 
-                for (const file of videoFiles) {
+                for (const file of newFiles) {
                     // Check if file already exists
                     if (this.files.find(f => f.name === file.name && f.size === file.size)) {
                         continue;
@@ -702,7 +798,8 @@
                         duration: null,
                         status: 'processing',
                         videoId: null,
-                        error: null
+                        error: null,
+                        folderPath: file.webkitRelativePath || file.name // Capture folder path
                     };
 
                     this.files.push(fileData);
@@ -821,12 +918,17 @@
                     statusText = fileData.error;
                 }
 
+                const folderPathDisplay = fileData.folderPath && fileData.folderPath !== fileData.name
+                    ? `<p style="font-size: 0.85em; color: #7f8c8d; margin-top: 2px;">📁 ${fileData.folderPath}</p>`
+                    : '';
+
                 fileItem.innerHTML = `
                     <div class="file-info">
                         <div class="file-icon">${this.getFileIcon(fileData.status)}</div>
                         <div class="file-details">
                             <h4>${fileData.name}</h4>
                             <p>${this.formatFileSize(fileData.size)} • Duration: ${fileData.duration !== null ? fileData.duration + 's' : 'Loading...'}</p>
+                            ${folderPathDisplay}
                         </div>
                     </div>
                     <div class="file-status status-${fileData.status}">
@@ -938,7 +1040,8 @@
                         formData.append('videos', fileData.file);
                         videoData.push({
                             name: fileData.name,
-                            duration: fileData.duration
+                            duration: fileData.duration,
+                            folderPath: fileData.folderPath || fileData.name
                         });
                     });
 
