@@ -40,9 +40,20 @@ const uploadDb = new UploadDatabase('./uploads.db');
 const vdocipherVerifier = new VdoCipherVerifier(VDOCIPHER_API_KEY, API_BASE_URL);
 const logger = new SimpleUploadLogger('./upload_logs');
 
+// Store SSE clients for progress updates
+const sseClients = new Map();
+
 // Helper function to add delay between API calls
 async function apiDelay(ms = API_DELAY_BETWEEN_CALLS) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Helper function to send SSE progress updates
+function sendProgress(sessionId, data) {
+  const client = sseClients.get(sessionId);
+  if (client) {
+    client.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
 }
 
 // Check if API key is set
@@ -219,9 +230,24 @@ async function verifyFileNeedsUpload(filePath, fileName, fileSize) {
 }
 
 // Batch verification for all files
-async function batchVerifyFiles(files) {
+async function batchVerifyFiles(files, sseSessionId = null) {
+  let completed = 0;
+  const total = files.length;
+
   const verificationTasks = files.map(file => async () => {
     const result = await verifyFileNeedsUpload(file.path, file.originalname, file.size);
+
+    completed++;
+    if (sseSessionId) {
+      sendProgress(sseSessionId, {
+        type: 'hash_progress',
+        current: completed,
+        total: total,
+        fileName: file.originalname,
+        message: `Verifying file ${completed}/${total}: ${file.originalname}`
+      });
+    }
+
     return {
       file,
       verification: result
@@ -233,7 +259,7 @@ async function batchVerifyFiles(files) {
 }
 
 app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
-  let sessionId = null;
+  let logSessionId = null;
 
   try {
     const videoData = JSON.parse(req.body.videoData || "[]");
@@ -241,11 +267,30 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
     const successfulUploads = [];
     const skippedUploads = [];
 
+    // Get SSE session ID from request
+    const sseSessionId = req.body.sessionId || req.query.sessionId;
+
     // Start simple logging session
-    sessionId = logger.startSession(req.files.length);
+    logSessionId = logger.startSession(req.files.length);
+
+    // Send initial progress
+    if (sseSessionId) {
+      sendProgress(sseSessionId, {
+        type: 'start',
+        total: req.files.length,
+        message: `Starting upload of ${req.files.length} videos...`
+      });
+    }
 
     // STEP 1: Batch verify all files (parallel hash calculation)
-    const verificationResults = await batchVerifyFiles(req.files);
+    if (sseSessionId) {
+      sendProgress(sseSessionId, {
+        type: 'verifying',
+        message: `Verifying ${req.files.length} files...`
+      });
+    }
+
+    const verificationResults = await batchVerifyFiles(req.files, sseSessionId);
 
     // Separate files that need upload vs already uploaded
     const filesToUpload = [];
@@ -288,6 +333,18 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
 
     // STEP 2: Upload only files that need it
     if (filesToUpload.length > 0) {
+      let uploadedCount = 0;
+      const totalToUpload = filesToUpload.length;
+
+      if (sseSessionId) {
+        sendProgress(sseSessionId, {
+          type: 'upload_start',
+          total: totalToUpload,
+          skipped: filesAlreadyUploaded.length,
+          message: `Uploading ${totalToUpload} videos (${filesAlreadyUploaded.length} skipped)...`
+        });
+      }
+
       const uploadTasks = filesToUpload.map(({ file, verification }) => async () => {
         try {
           await apiDelay();
@@ -295,6 +352,18 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
           const videoTitle = path.parse(file.originalname).name;
           const metadata = videoData.find(v => v.name === file.originalname);
           const duration = metadata ? metadata.duration : 0;
+
+          // Send progress: Starting upload
+          if (sseSessionId) {
+            sendProgress(sseSessionId, {
+              type: 'upload_file',
+              current: uploadedCount + 1,
+              total: totalToUpload,
+              fileName: file.originalname,
+              fileSize: file.size,
+              message: `Uploading ${uploadedCount + 1}/${totalToUpload}: ${file.originalname}`
+            });
+          }
 
           // Record upload attempt in database
           uploadDb.upsertUpload({
@@ -309,6 +378,8 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
 
           const uploadCredentials = await getUploadCredentials(videoTitle);
           const uploadResult = await uploadToVdoCipher(file.path, uploadCredentials, file.originalname);
+
+          uploadedCount++;
 
           // Mark as successful in database
           uploadDb.markSuccess(verification.hash, file.size, uploadResult.videoId, videoTitle);
@@ -449,11 +520,22 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
     const sessionSummary = logger.endSession();
     const uploadLogFile = sessionSummary?.logFile;
 
-    // Return appropriate response based on results
+    // Send completion progress
     const totalProcessed = req.files.length;
     const totalSkipped = skippedUploads.length;
     const totalNewUploads = successfulUploads.length;
     const totalFailed = uploadErrors.length;
+
+    if (sseSessionId) {
+      sendProgress(sseSessionId, {
+        type: 'complete',
+        total: totalProcessed,
+        uploaded: totalNewUploads,
+        skipped: totalSkipped,
+        failed: totalFailed,
+        message: `Upload complete: ${totalNewUploads} uploaded, ${totalSkipped} skipped, ${totalFailed} failed`
+      });
+    }
 
     if (uploadErrors.length === 0) {
       // All successful (including skipped)
@@ -559,6 +641,31 @@ app.get('/api/download/:filename', (req, res) => {
 });
 
 // Route to get server status and configuration
+// SSE endpoint for real-time upload progress
+app.get('/api/upload-progress/:sessionId', (req, res) => {
+  const sessionId = req.params.sessionId;
+
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disable buffering in nginx
+
+  // Store this client
+  sseClients.set(sessionId, res);
+
+  console.log(`📡 SSE client connected: ${sessionId}`);
+
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ type: 'connected', message: 'Connected to progress stream' })}\n\n`);
+
+  // Handle client disconnect
+  req.on('close', () => {
+    console.log(`📡 SSE client disconnected: ${sessionId}`);
+    sseClients.delete(sessionId);
+  });
+});
+
 app.get('/api/status', (req, res) => {
   const stats = uploadDb.getStats();
 
@@ -574,7 +681,8 @@ app.get('/api/status', (req, res) => {
       frontendDurationExtraction: true,
       backgroundVideoProcessing: true,
       instantExcelDownload: true,
-      noPollingNeeded: true
+      noPollingNeeded: true,
+      realTimeProgress: true // New feature
     },
     config: {
       maxFileSize: `${(MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(1)}GB`,
@@ -681,7 +789,13 @@ if (fs.existsSync(tempDir)) {
   fs.emptyDirSync(tempDir);
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📂 Open http://localhost:${PORT} to start uploading`);
 });
+
+// Disable server timeout to handle unlimited videos (production-ready)
+// Client-side timeout (30 min) provides protection against hanging requests
+server.timeout = 0; // 0 = no timeout (handles any number of videos)
+server.keepAliveTimeout = 65000; // 65 seconds
+server.headersTimeout = 66000; // 66 seconds (must be > keepAliveTimeout)
