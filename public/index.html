@@ -584,6 +584,7 @@
                 this.videoData = [];
                 this.isUploading = false;
                 this.excelFileName = null;
+                this.allBatchExcelFiles = []; // Track all Excel files from all batches
                 this.currentPage = 1;
                 this.itemsPerPage = 10;
                 this.uploadResults = {
@@ -1058,7 +1059,97 @@
                     return;
                 }
 
-                this.resetMessages();
+                // CRITICAL FIX: Automatic batching to prevent connection reset
+                const MAX_BATCH_SIZE = 30; // Upload max 30 videos at a time (reduced for stability)
+
+                if (readyFiles.length > MAX_BATCH_SIZE) {
+                    const totalBatches = Math.ceil(readyFiles.length / MAX_BATCH_SIZE);
+                    const proceed = confirm(
+                        `You have ${readyFiles.length} videos ready.\n\n` +
+                        `To prevent connection errors, they will be automatically uploaded in ${totalBatches} batches of ${MAX_BATCH_SIZE} videos each.\n\n` +
+                        `The process will run continuously until all videos are uploaded.\n\n` +
+                        `Continue?`
+                    );
+
+                    if (!proceed) return;
+
+                    // Upload all batches automatically
+                    return this.uploadAllBatches(readyFiles, MAX_BATCH_SIZE);
+                }
+
+                // If under limit, upload all at once (this is the last/only batch)
+                return this.uploadBatch(readyFiles, false, true);
+            }
+
+            async uploadAllBatches(allFiles, batchSize) {
+                const totalBatches = Math.ceil(allFiles.length / batchSize);
+                let currentBatch = 0;
+                let overallSuccess = 0;
+                let overallFailed = 0;
+
+                for (let i = 0; i < allFiles.length; i += batchSize) {
+                    currentBatch++;
+                    const batch = allFiles.slice(i, i + batchSize);
+
+                    console.log(`📦 Processing batch ${currentBatch}/${totalBatches} (${batch.length} videos)`);
+                    this.showStatus(`Processing batch ${currentBatch} of ${totalBatches}...`, 'processing');
+
+                    const isLastBatch = currentBatch === totalBatches;
+
+                    try {
+                        await this.uploadBatch(batch, !isLastBatch, false); // Don't show button yet
+
+                        // Track overall results
+                        overallSuccess += this.uploadResults.success;
+                        overallFailed += this.uploadResults.failed;
+
+                        console.log(`✓ Batch ${currentBatch}/${totalBatches} complete`);
+
+                        // Short delay between batches
+                        if (!isLastBatch) {
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        }
+
+                    } catch (error) {
+                        console.error(`❌ Batch ${currentBatch} failed:`, error);
+                        overallFailed += batch.length;
+
+                        const continueUpload = confirm(
+                            `Batch ${currentBatch} failed with error:\n${error.message}\n\n` +
+                            `Continue with remaining batches?`
+                        );
+
+                        if (!continueUpload) break;
+                    }
+                }
+
+                // Show final summary
+                this.showStatus(
+                    `All batches complete! ${overallSuccess} uploaded, ${overallFailed} failed out of ${allFiles.length} total`,
+                    overallFailed === 0 ? 'success' : 'warning'
+                );
+
+                console.log(`\n🎉 Upload complete! ${overallSuccess}/${allFiles.length} successful, ${overallFailed} failed`);
+
+                // ALWAYS show download button after all batches complete (success or failure)
+                // This allows users to download results from successful batches even if some failed
+                if (this.allBatchExcelFiles.length > 0) {
+                    this.downloadSection.style.display = 'block';
+
+                    if (this.allBatchExcelFiles.length > 1) {
+                        this.downloadBtn.innerHTML = `📊 Download Combined Report (${this.allBatchExcelFiles.length} Batches)`;
+                    } else {
+                        this.downloadBtn.innerHTML = `📊 Download Excel Report`;
+                    }
+
+                    console.log(`📊 Download button displayed for ${this.allBatchExcelFiles.length} batch(es)`);
+                }
+            }
+
+            async uploadBatch(readyFiles, keepUploading = false, isLastBatch = false) {
+                if (!keepUploading) {
+                    this.resetMessages();
+                }
                 this.isUploading = true;
                 this.uploadBtn.disabled = true;
                 this.clearBtn.disabled = true;
@@ -1104,16 +1195,30 @@
 
                     const formData = new FormData();
                     const videoData = [];
+                    const addedFiles = new Set(); // Track added files to prevent duplicates
 
                     // Add files and prepare metadata
                     readyFiles.forEach(fileData => {
+                        // Create unique key for this file
+                        const fileKey = `${fileData.name}-${fileData.size}`;
+
+                        // Skip if already added (prevents duplicate uploads)
+                        if (addedFiles.has(fileKey)) {
+                            console.warn(`Skipping duplicate file: ${fileData.name}`);
+                            return;
+                        }
+
                         formData.append('videos', fileData.file);
                         videoData.push({
                             name: fileData.name,
                             duration: fileData.duration,
                             folderPath: fileData.folderPath || fileData.name
                         });
+
+                        addedFiles.add(fileKey);
                     });
+
+                    console.log(`📤 Uploading ${addedFiles.size} unique files (${readyFiles.length} total ready)`);
 
                     // Add video metadata and session ID
                     formData.append('videoData', JSON.stringify(videoData));
@@ -1181,10 +1286,10 @@
                         throw new Error(result.data.error || 'All uploads failed');
                     } else if (result.status === 207) {
                         // Partial success - some uploads failed
-                        await this.handleUploadResponse(result.data, readyFiles);
+                        await this.handleUploadResponse(result.data, readyFiles, isLastBatch);
                     } else if (result.ok) {
                         // All uploads successful
-                        await this.handleUploadResponse(result.data, readyFiles);
+                        await this.handleUploadResponse(result.data, readyFiles, isLastBatch);
                     } else {
                         // Other error
                         throw new Error(result.data.error || `HTTP ${result.status}`);
@@ -1209,7 +1314,7 @@
                 }
             }
 
-            async handleUploadResponse(result, readyFiles) {
+            async handleUploadResponse(result, readyFiles, isLastBatch = false) {
                 this.excelFileName = result.excelFileName;
 
                 // Track skipped files
@@ -1336,7 +1441,18 @@
                 }
 
                 if (result.excelFileName) {
-                    this.downloadSection.style.display = 'block';
+                    this.excelFileName = result.excelFileName;
+                    this.allBatchExcelFiles.push(result.excelFileName); // Add to batch collection
+
+                    // Only show download button after all batches complete
+                    if (isLastBatch) {
+                        this.downloadSection.style.display = 'block';
+
+                        // Update button text to show batch count
+                        if (this.allBatchExcelFiles.length > 1) {
+                            this.downloadBtn.innerHTML = `📊 Download Combined Report (${this.allBatchExcelFiles.length} Batches)`;
+                        }
+                    }
                 }
 
                 this.updateFileDisplay();
@@ -1470,29 +1586,65 @@
                 this.errorMessage.style.display = 'none';
                 this.downloadSection.style.display = 'none';
                 this.resultsSummary.style.display = 'none';
+                // Reset batch Excel files array for new upload session
+                this.allBatchExcelFiles = [];
             }
 
             async downloadExcel() {
-                if (!this.excelFileName) {
+                if (!this.excelFileName && this.allBatchExcelFiles.length === 0) {
                     alert('No Excel file available for download');
                     return;
                 }
 
                 try {
-                    const response = await fetch(`/api/download/${this.excelFileName}`);
-                    if (!response.ok) {
-                        throw new Error('Download failed');
-                    }
+                    let downloadUrl, fileName;
 
-                    const blob = await response.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = this.excelFileName;
-                    document.body.appendChild(a);
-                    a.click();
-                    window.URL.revokeObjectURL(url);
-                    document.body.removeChild(a);
+                    // If multiple batches, download combined file
+                    if (this.allBatchExcelFiles.length > 1) {
+                        downloadUrl = '/api/download-combined';
+                        fileName = `combined_upload_report_${Date.now()}.xlsx`;
+
+                        // Send all batch filenames to backend for merging
+                        const response = await fetch(downloadUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ files: this.allBatchExcelFiles })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error('Failed to create combined report');
+                        }
+
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = fileName;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+
+                    } else {
+                        // Single batch - download normally
+                        downloadUrl = `/api/download/${this.excelFileName}`;
+                        fileName = this.excelFileName;
+
+                        const response = await fetch(downloadUrl);
+                        if (!response.ok) {
+                            throw new Error('Download failed');
+                        }
+
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = fileName;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+                    }
 
                 } catch (error) {
                     console.error('Download error:', error);

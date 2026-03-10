@@ -13,14 +13,14 @@ const VdoCipherVerifier = require('./vdocipher-verifier');
 const SimpleUploadLogger = require('./simple-logger');
 require('dotenv').config();
 
-const httpAgent = new http.Agent({ 
+const httpAgent = new http.Agent({
   keepAlive: true,
-  maxSockets: 15
+  maxSockets: 50 // Increased to handle more concurrent connections
 });
 
-const httpsAgent = new https.Agent({ 
+const httpsAgent = new https.Agent({
   keepAlive: true,
-  maxSockets: 15
+  maxSockets: 50 // Increased to handle more concurrent connections
 });
 
 const app = express();
@@ -63,7 +63,13 @@ if (VDOCIPHER_API_KEY === 'your_api_key_here') {
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+// Increase body parser limits to handle large JSON arrays (for 1000+ videos metadata)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({
+  limit: '50mb',
+  extended: true,
+  parameterLimit: 100000 // Increase parameter limit for many files
+}));
 app.use(express.static('public'));
 
 // Configure multer for temporary file storage
@@ -73,19 +79,94 @@ const storage = multer.diskStorage({
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir);
     }
+    console.log(`📁 Multer receiving file: ${file.originalname}`);
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+    const filename = `${Date.now()}-${file.originalname}`;
+    console.log(`💾 Multer saving file as: ${filename}`);
+    cb(null, filename);
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage: storage,
   limits: {
-    fileSize: MAX_FILE_SIZE // Configurable file size limit
+    fileSize: MAX_FILE_SIZE, // Max file size per file (10GB)
+    files: 10000, // Max number of files (supports bulk upload of 1000+ videos)
+    fieldSize: 50 * 1024 * 1024, // Max field size (50MB for large JSON metadata)
+    fields: 1000 // Max number of non-file fields
   }
 });
+
+// Middleware to clean old temp files BEFORE multer processes
+function cleanTempFolderMiddleware(req, res, next) {
+  try {
+    console.log(`🔵 cleanTempFolderMiddleware called for ${req.method} ${req.path}`);
+    const tempDir = path.join(__dirname, 'temp_uploads');
+
+    // Only clean for upload endpoint
+    if (req.path === '/api/upload-videos' && req.method === 'POST') {
+      console.log(`🧹 Starting temp folder cleanup...`);
+      if (fs.existsSync(tempDir)) {
+        const files = fs.readdirSync(tempDir);
+        // Only clean if there are old files (more than 1 minute old)
+        const now = Date.now();
+        files.forEach(file => {
+          const filePath = path.join(tempDir, file);
+          const stats = fs.statSync(filePath);
+          const fileAge = now - stats.mtimeMs;
+
+          // Delete files older than 1 minute (60000 ms)
+          if (fileAge > 60000) {
+            try {
+              fs.removeSync(filePath);
+              console.log(`🧹 Cleaned old temp file: ${file} (age: ${Math.round(fileAge/1000)}s)`);
+            } catch (e) {
+              console.warn(`⚠️ Could not delete old file: ${file}`, e.message);
+            }
+          }
+        });
+      }
+    }
+  } catch (error) {
+    console.warn('Warning: Could not clean temp folder:', error.message);
+  }
+  next();
+}
+
+// Multer error handling middleware
+function handleMulterError(err, req, res, next) {
+  if (err instanceof multer.MulterError) {
+    // Multer-specific errors
+    console.error('Multer error:', err.code, err.message);
+
+    const errorMessages = {
+      'LIMIT_FILE_SIZE': `File too large. Maximum size is ${(MAX_FILE_SIZE / (1024 * 1024 * 1024)).toFixed(1)}GB per file.`,
+      'LIMIT_FILE_COUNT': 'Too many files. Maximum is 10000 files per upload.',
+      'LIMIT_FIELD_KEY': 'Field name too long.',
+      'LIMIT_FIELD_VALUE': 'Field value too long.',
+      'LIMIT_FIELD_COUNT': 'Too many fields.',
+      'LIMIT_UNEXPECTED_FILE': 'Unexpected file field.',
+      'LIMIT_PART_COUNT': 'Too many parts in multipart request.'
+    };
+
+    return res.status(400).json({
+      success: false,
+      error: errorMessages[err.code] || `Upload error: ${err.message}`,
+      code: err.code
+    });
+  } else if (err) {
+    // Other errors
+    console.error('Upload error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error during file upload',
+      details: err.message
+    });
+  }
+  next();
+}
 
 // Helper function to get upload credentials from VdoCipher
 async function getUploadCredentials(videoTitle, folderId = DEFAULT_FOLDER_ID) {
@@ -117,11 +198,13 @@ async function getUploadCredentials(videoTitle, folderId = DEFAULT_FOLDER_ID) {
   }
 }
 
-// Helper function to upload file to VdoCipher
-async function uploadToVdoCipher(filePath, uploadData, originalName) {
+// Helper function to upload file to VdoCipher with retry logic
+async function uploadToVdoCipher(filePath, uploadData, originalName, retryCount = 0) {
+  const MAX_RETRIES = 2; // Retry up to 2 times for timeout errors
+
   try {
     const form = new FormData();
-    
+
     // Add all required fields from upload credentials
     form.append('policy', uploadData.clientPayload.policy);
     form.append('key', uploadData.clientPayload.key);
@@ -131,7 +214,7 @@ async function uploadToVdoCipher(filePath, uploadData, originalName) {
     form.append('x-amz-credential', uploadData.clientPayload['x-amz-credential']);
     form.append('success_action_status', '201');
     form.append('success_action_redirect', '');
-    
+
     // Add the file - this must be last
     form.append('file', fs.createReadStream(filePath), {
       filename: originalName,
@@ -144,8 +227,9 @@ async function uploadToVdoCipher(filePath, uploadData, originalName) {
       },
       maxContentLength: Infinity,
       maxBodyLength: Infinity,
+      timeout: 0, // No timeout - allow unlimited time for large file uploads
       httpAgent: httpAgent,
-      httpsAgent: httpsAgent 
+      httpsAgent: httpsAgent
     });
 
     return {
@@ -154,7 +238,17 @@ async function uploadToVdoCipher(filePath, uploadData, originalName) {
       data: response.data
     };
   } catch (error) {
-    console.error('Error uploading to VdoCipher:', error.response?.data || error.message);
+    const errorData = error.response?.data || error.message;
+    const isTimeoutError = typeof errorData === 'string' && errorData.includes('RequestTimeout');
+
+    // Retry only for timeout errors
+    if (isTimeoutError && retryCount < MAX_RETRIES) {
+      console.log(`⚠️ Timeout uploading ${originalName}, retrying (${retryCount + 1}/${MAX_RETRIES})...`);
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+      return uploadToVdoCipher(filePath, uploadData, originalName, retryCount + 1);
+    }
+
+    console.error('Error uploading to VdoCipher:', errorData);
     throw error;
   }
 }
@@ -163,18 +257,24 @@ async function processInBatches(tasks, limit) {
   const results = [];
   let index = 0;
 
-  async function runNext() {
-    if (index >= tasks.length) return;
-    const currentIndex = index++;
-    const result = await tasks[currentIndex]();
-    results[currentIndex] = result;
-    await runNext();
+  // Non-recursive worker function (prevents stack overflow with many files)
+  async function runWorker() {
+    while (index < tasks.length) {
+      const currentIndex = index++;
+      try {
+        const result = await tasks[currentIndex]();
+        results[currentIndex] = result;
+      } catch (error) {
+        console.error(`Error in batch task ${currentIndex}:`, error);
+        results[currentIndex] = null; // Mark as failed
+      }
+    }
   }
 
-  // Start `limit` workers
+  // Start `limit` workers in parallel
   const workers = [];
-  for (let i = 0; i < limit; i++) {
-    workers.push(runNext());
+  for (let i = 0; i < Math.min(limit, tasks.length); i++) {
+    workers.push(runWorker());
   }
 
   await Promise.all(workers);
@@ -258,14 +358,56 @@ async function batchVerifyFiles(files, sseSessionId = null) {
   return await processInBatches(verificationTasks, 10);
 }
 
-app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
+app.post("/api/upload-videos", (req, res, next) => {
+  console.log(`🔵 Upload endpoint hit - Starting multer processing...`);
+  upload.array("videos")(req, res, (err) => {
+    if (err) {
+      console.error(`❌ Multer failed:`, err);
+      return handleMulterError(err, req, res, next);
+    }
+    console.log(`✅ Multer completed! Received ${req.files ? req.files.length : 0} files`);
+    next();
+  });
+}, async (req, res) => {
   let logSessionId = null;
+  let clientDisconnected = false;
+
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`📥 UPLOAD HANDLER CALLED - Processing files`);
+  console.log(`   Files received: ${req.files ? req.files.length : 0}`);
+  console.log(`   Body size: ${JSON.stringify(req.body).length} bytes`);
+  console.log(`${'='.repeat(80)}\n`);
+
+  // Detect client disconnect
+  req.on('close', () => {
+    if (!res.headersSent) {
+      clientDisconnected = true;
+      console.error('❌ CLIENT DISCONNECTED DURING UPLOAD PROCESSING');
+    }
+  });
 
   try {
+    // Parse video metadata first
     const videoData = JSON.parse(req.body.videoData || "[]");
     const uploadErrors = [];
     const successfulUploads = [];
     const skippedUploads = [];
+
+    // CRITICAL VALIDATION: Ensure file count matches metadata count
+    if (req.files.length !== videoData.length) {
+      console.error(`⚠️ File count mismatch! Files: ${req.files.length}, Metadata: ${videoData.length}`);
+      console.error(`This usually means old temp files from previous failed uploads.`);
+
+      // Return error to prevent processing wrong number of files
+      return res.status(400).json({
+        success: false,
+        error: `File count mismatch: Received ${req.files.length} files but ${videoData.length} metadata entries. Please refresh and try again.`,
+        details: {
+          filesReceived: req.files.length,
+          metadataCount: videoData.length
+        }
+      });
+    }
 
     // Get SSE session ID from request
     const sseSessionId = req.body.sessionId || req.query.sessionId;
@@ -283,6 +425,7 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
     }
 
     // STEP 1: Batch verify all files (parallel hash calculation)
+    console.log(`🔍 Starting hash verification for ${req.files.length} files...`);
     if (sseSessionId) {
       sendProgress(sseSessionId, {
         type: 'verifying',
@@ -291,6 +434,7 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
     }
 
     const verificationResults = await batchVerifyFiles(req.files, sseSessionId);
+    console.log(`✓ Hash verification complete. Results: ${verificationResults.length}`);
 
     // Separate files that need upload vs already uploaded
     const filesToUpload = [];
@@ -346,12 +490,13 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
       }
 
       const uploadTasks = filesToUpload.map(({ file, verification }) => async () => {
+        // Define metadata outside try block so it's accessible in catch
+        const metadata = videoData.find(v => v.name === file.originalname);
+        const videoTitle = path.parse(file.originalname).name;
+        const duration = metadata ? metadata.duration : 0;
+
         try {
           await apiDelay();
-
-          const videoTitle = path.parse(file.originalname).name;
-          const metadata = videoData.find(v => v.name === file.originalname);
-          const duration = metadata ? metadata.duration : 0;
 
           // Send progress: Starting upload
           if (sseSessionId) {
@@ -625,7 +770,7 @@ app.post("/api/upload-videos", upload.array("videos"), async (req, res) => {
 app.get('/api/download/:filename', (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(__dirname, 'temp_uploads', filename);
-  
+
   if (fs.existsSync(filePath)) {
     res.download(filePath, (err) => {
       if (!err) {
@@ -637,6 +782,89 @@ app.get('/api/download/:filename', (req, res) => {
     });
   } else {
     res.status(404).json({ error: 'File not found' });
+  }
+});
+
+// Route to download combined Excel from multiple batches
+app.post('/api/download-combined', (req, res) => {
+  try {
+    const { files } = req.body;
+
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: 'No files provided' });
+    }
+
+    console.log(`📊 Combining ${files.length} Excel files into one report...`);
+
+    // Read all Excel files and combine them
+    const allRows = [];
+    const logDir = path.join(__dirname, 'upload_logs');
+
+    files.forEach((filename, index) => {
+      const filePath = path.join(logDir, filename);
+
+      if (fs.existsSync(filePath)) {
+        console.log(`   Reading batch ${index + 1}: ${filename}`);
+        const workbook = XLSX.readFile(filePath);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet);
+
+        // Add batch information to each row
+        rows.forEach(row => {
+          row['Batch'] = index + 1;
+          allRows.push(row);
+        });
+      } else {
+        console.warn(`   ⚠️ File not found: ${filename}`);
+      }
+    });
+
+    if (allRows.length === 0) {
+      return res.status(404).json({ error: 'No data found in provided files' });
+    }
+
+    // Create new workbook with combined data
+    const newWorkbook = XLSX.utils.book_new();
+    const newWorksheet = XLSX.utils.json_to_sheet(allRows);
+
+    // Auto-size columns
+    const colWidths = [
+      { wch: 50 }, // File Name
+      { wch: 15 }, // Status
+      { wch: 35 }, // Video ID
+      { wch: 30 }, // Video Title
+      { wch: 10 }, // Duration
+      { wch: 15 }, // File Size
+      { wch: 50 }, // Folder Path
+      { wch: 50 }, // Error
+      { wch: 10 }  // Batch
+    ];
+    newWorksheet['!cols'] = colWidths;
+
+    XLSX.utils.book_append_sheet(newWorkbook, newWorksheet, 'Combined Upload Report');
+
+    // Generate file
+    const combinedFileName = `combined_upload_report_${Date.now()}.xlsx`;
+    const combinedFilePath = path.join(__dirname, 'temp_uploads', combinedFileName);
+
+    XLSX.writeFile(newWorkbook, combinedFilePath);
+
+    console.log(`✅ Combined report created: ${allRows.length} total rows from ${files.length} batches`);
+
+    // Send file
+    res.download(combinedFilePath, combinedFileName, (err) => {
+      if (!err) {
+        // Clean up combined file after download
+        setTimeout(() => {
+          fs.removeSync(combinedFilePath);
+        }, 5000);
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating combined report:', error);
+    res.status(500).json({ error: 'Failed to create combined report', details: error.message });
   }
 });
 
@@ -799,3 +1027,14 @@ const server = app.listen(PORT, () => {
 server.timeout = 0; // 0 = no timeout (handles any number of videos)
 server.keepAliveTimeout = 65000; // 65 seconds
 server.headersTimeout = 66000; // 66 seconds (must be > keepAliveTimeout)
+
+// Global error handlers to catch crashes
+process.on('uncaughtException', (error) => {
+  console.error('❌ UNCAUGHT EXCEPTION:', error);
+  console.error('Stack:', error.stack);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ UNHANDLED REJECTION at:', promise);
+  console.error('Reason:', reason);
+});
