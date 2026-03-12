@@ -99,42 +99,6 @@ const upload = multer({
   }
 });
 
-// Middleware to clean old temp files BEFORE multer processes
-function cleanTempFolderMiddleware(req, res, next) {
-  try {
-    console.log(`🔵 cleanTempFolderMiddleware called for ${req.method} ${req.path}`);
-    const tempDir = path.join(__dirname, 'temp_uploads');
-
-    // Only clean for upload endpoint
-    if (req.path === '/api/upload-videos' && req.method === 'POST') {
-      console.log(`🧹 Starting temp folder cleanup...`);
-      if (fs.existsSync(tempDir)) {
-        const files = fs.readdirSync(tempDir);
-        // Only clean if there are old files (more than 1 minute old)
-        const now = Date.now();
-        files.forEach(file => {
-          const filePath = path.join(tempDir, file);
-          const stats = fs.statSync(filePath);
-          const fileAge = now - stats.mtimeMs;
-
-          // Delete files older than 1 minute (60000 ms)
-          if (fileAge > 60000) {
-            try {
-              fs.removeSync(filePath);
-              console.log(`🧹 Cleaned old temp file: ${file} (age: ${Math.round(fileAge/1000)}s)`);
-            } catch (e) {
-              console.warn(`⚠️ Could not delete old file: ${file}`, e.message);
-            }
-          }
-        });
-      }
-    }
-  } catch (error) {
-    console.warn('Warning: Could not clean temp folder:', error.message);
-  }
-  next();
-}
-
 // Multer error handling middleware
 function handleMulterError(err, req, res, next) {
   if (err instanceof multer.MulterError) {
@@ -795,10 +759,11 @@ app.post('/api/download-combined', (req, res) => {
     }
 
     console.log(`📊 Combining ${files.length} Excel files into one report...`);
+    console.log(`   Files received:`, files);
 
     // Read all Excel files and combine them
     const allRows = [];
-    const logDir = path.join(__dirname, 'upload_logs');
+    const logDir = path.join(__dirname, 'temp_uploads'); // Excel files are stored in temp_uploads, not upload_logs
 
     files.forEach((filename, index) => {
       const filePath = path.join(logDir, filename);
@@ -810,11 +775,15 @@ app.post('/api/download-combined', (req, res) => {
         const worksheet = workbook.Sheets[sheetName];
         const rows = XLSX.utils.sheet_to_json(worksheet);
 
+        console.log(`   Batch ${index + 1} contains ${rows.length} rows`);
+
         // Add batch information to each row
         rows.forEach(row => {
           row['Batch'] = index + 1;
           allRows.push(row);
         });
+
+        console.log(`   Total rows after batch ${index + 1}: ${allRows.length}`);
       } else {
         console.warn(`   ⚠️ File not found: ${filename}`);
       }

@@ -1060,7 +1060,7 @@
                 }
 
                 // CRITICAL FIX: Automatic batching to prevent connection reset
-                const MAX_BATCH_SIZE = 30; // Upload max 30 videos at a time (reduced for stability)
+                const MAX_BATCH_SIZE = 20; // Upload max 20 videos at a time (reduced to prevent browser memory issues)
 
                 if (readyFiles.length > MAX_BATCH_SIZE) {
                     const totalBatches = Math.ceil(readyFiles.length / MAX_BATCH_SIZE);
@@ -1097,7 +1097,7 @@
                     const isLastBatch = currentBatch === totalBatches;
 
                     try {
-                        await this.uploadBatch(batch, !isLastBatch, false); // Don't show button yet
+                        await this.uploadBatch(batch, true, false); // Always keep uploading, never show button mid-batch
 
                         // Track overall results
                         overallSuccess += this.uploadResults.success;
@@ -1167,8 +1167,9 @@
                     errors: []
                 };
 
-                // Declare eventSource outside try block so it's accessible in finally
+                // Declare eventSource and wakeLock outside try block so they're accessible in finally
                 let eventSource = null;
+                let wakeLock = null;
 
                 try {
                     // Mark files as uploading
@@ -1227,6 +1228,19 @@
                     this.showStatus('Uploading videos to VdoCipher...', 'processing');
                     this.updateProgressStats();
 
+                    // Prevent browser/screen from going to sleep during upload
+                    if ('wakeLock' in navigator) {
+                        try {
+                            wakeLock = await navigator.wakeLock.request('screen');
+                            console.log('🔆 Screen wake lock enabled - prevents browser sleep during upload');
+                        } catch (err) {
+                            console.warn('⚠️ Could not enable wake lock:', err);
+                        }
+                    } else {
+                        console.warn('⚠️ Wake Lock API not supported - keep this tab active during upload');
+                        alert('IMPORTANT: Keep this browser tab active and visible during upload to prevent connection errors.');
+                    }
+
                     // Upload with progress tracking using XMLHttpRequest
                     const result = await new Promise((resolve, reject) => {
                         const xhr = new XMLHttpRequest();
@@ -1234,12 +1248,23 @@
                         // Set timeout to 2 hours (allows uploading 1000+ videos)
                         xhr.timeout = 7200000; // 2 hours in milliseconds
 
+                        // Monitor upload lifecycle
+                        xhr.upload.addEventListener('loadstart', () => {
+                            console.log('📤 Upload started - sending files to server...');
+                        });
+
+                        xhr.upload.addEventListener('abort', () => {
+                            console.error('❌ Upload aborted by browser/network - batch will retry');
+                            reject(new Error('Upload aborted - please retry this batch'));
+                        });
+
                         // Track upload progress
                         xhr.upload.addEventListener('progress', (e) => {
                             if (e.lengthComputable) {
                                 const percentComplete = (e.loaded / e.total) * 100;
                                 this.progressFill.style.width = `${percentComplete}%`;
                                 this.showStatus(`Uploading videos: ${Math.round(percentComplete)}%`, 'processing');
+                                console.log(`📤 Upload progress: ${Math.round(percentComplete)}% (${(e.loaded / (1024 * 1024)).toFixed(1)}MB / ${(e.total / (1024 * 1024)).toFixed(1)}MB)`);
                             }
                         });
 
@@ -1303,6 +1328,12 @@
                     if (eventSource) {
                         eventSource.close();
                         console.log('SSE connection closed');
+                    }
+
+                    // Release wake lock
+                    if (wakeLock) {
+                        wakeLock.release();
+                        console.log('🔆 Screen wake lock released');
                     }
 
                     this.isUploading = false;
@@ -1444,6 +1475,10 @@
                     this.excelFileName = result.excelFileName;
                     this.allBatchExcelFiles.push(result.excelFileName); // Add to batch collection
 
+                    console.log(`📊 Batch complete - Excel file: ${result.excelFileName}`);
+                    console.log(`📊 Total batches tracked: ${this.allBatchExcelFiles.length}`, this.allBatchExcelFiles);
+                    console.log(`📊 isLastBatch: ${isLastBatch}`);
+
                     // Only show download button after all batches complete
                     if (isLastBatch) {
                         this.downloadSection.style.display = 'block';
@@ -1452,6 +1487,8 @@
                         if (this.allBatchExcelFiles.length > 1) {
                             this.downloadBtn.innerHTML = `📊 Download Combined Report (${this.allBatchExcelFiles.length} Batches)`;
                         }
+
+                        console.log(`✅ Download button displayed (last batch reached)`);
                     }
                 }
 
